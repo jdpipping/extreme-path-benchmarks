@@ -46,7 +46,7 @@ pit_cdf = function(m, p0) {
   pmin(pmax(u, 0), 1)
 }
 
-#' PIT analysis on U_i: upper-tail frequencies, one-sided KS, ECDF plot
+#' PIT analysis on U_i: upper-tail frequencies, one-sided KS, signature plot
 pit_analysis = function(game_data, out_dir_fig, league_name = "NFL") {
   game_data = game_data |> filter(!is.na(max_wp_loser) & !is.na(starting_wp_favored))
   p0 = game_data$starting_wp_favored
@@ -67,19 +67,28 @@ pit_analysis = function(game_data, out_dir_fig, league_name = "NFL") {
   ks_stat = if (!is.na(ks_result$statistic)) as.numeric(ks_result$statistic) else NA_real_
   ks_pval = if (!is.na(ks_result$p.value)) as.numeric(ks_result$p.value) else NA_real_
 
-  u_ecdf = ggplot(data.frame(u = u), aes(x = u)) +
-    annotate("rect", xmin = 0.90, xmax = 1, ymin = 0, ymax = 1,
+  u_sorted = sort(u)
+  sig_df = tibble(
+    t = c(0, u_sorted, 1),
+    fhat = c(0, seq_along(u_sorted) / n, 1)
+  ) |>
+    mutate(upper_gap = t - fhat)
+
+  y_lim = max(0.05, 1.1 * max(abs(sig_df$upper_gap), na.rm = TRUE))
+
+  u_signature = ggplot(sig_df, aes(x = t, y = upper_gap)) +
+    annotate("rect", xmin = 0.90, xmax = 1, ymin = -Inf, ymax = Inf,
              alpha = 0.08, fill = PIT_FILL) +
-    stat_ecdf(geom = "step", linewidth = 1.1, color = PIT_LINE) +
-    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = PIT_REF) +
-    coord_equal(xlim = c(0, 1), ylim = c(0, 1), expand = FALSE) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = PIT_REF) +
+    geom_step(linewidth = 1.1, color = PIT_LINE, direction = "hv") +
+    coord_cartesian(xlim = c(0, 1), ylim = c(-y_lim, y_lim), expand = FALSE) +
     labs(
-      x = expression("PIT value" ~ U[i]),
-      y = expression(hat(F)[U](t)),
-      title = paste0(league_name, ": ECDF of PIT values")
+      x = expression(t),
+      y = expression(t - hat(F)[U](t)),
+      title = paste0(league_name, ": PIT signature")
     ) +
     paper_theme(base_size = 11)
-  ggsave(file.path(out_dir_fig, "pit.png"), u_ecdf, width = 6, height = 4, dpi = 300)
+  ggsave(file.path(out_dir_fig, "pit.png"), u_signature, width = 6, height = 4, dpi = 300)
 
   list(n = n, prop_90 = prop_90, prop_95 = prop_95, prop_99 = prop_99,
        ks_stat = ks_stat, ks_pval = ks_pval)
