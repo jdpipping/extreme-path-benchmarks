@@ -1,41 +1,38 @@
 # Generate figures for paper/
 # Run from repo root: Rscript paper/code/nba-analysis.R
-# Uses data from paper/data/nba, outputs to paper/nba
+# Uses data from paper/data/nba, outputs to paper/figures/nba
 
 #################
 ### LIBRARIES ###
 #################
 
 library(tidyverse)
-library(viridisLite)
+
+args_full = commandArgs(trailingOnly = FALSE)
+file_arg = args_full[grepl("^--file=", args_full)]
+if (length(file_arg) > 0) {
+  script_path = normalizePath(sub("^--file=", "", file_arg[1]))
+} else {
+  script_path = normalizePath("code/nba-analysis.R")
+}
+paper_root = normalizePath(file.path(dirname(script_path), ".."))
+source(file.path(paper_root, "code", "plot-style.R"))
 
 ##################
 ### PARAMETERS ###
 ##################
 
-out_dir = "paper/nba"
-data_dir = "paper/data/nba"
+out_dir = file.path(paper_root, "figures", "nba")
+data_dir = file.path(paper_root, "data", "nba")
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 
-# Colors: magma palette to match CDF figures (colorblind-friendly)
-PIT_FILL = viridis(5, option = "magma")[3]
-PIT_LINE = "gray25"
+PIT_FILL = paper_style$shade
+PIT_LINE = paper_style$ink
+PIT_REF = paper_style$ref
 
 ##################
 ### FUNCTIONS ###
 ##################
-
-#' Right-tail PIT p-value: P(M_lambda >= m | p0)
-pit_pvalue = function(m, p0) {
-  p = numeric(length(m))
-  p[m < (1 - p0)] = 1
-  mid = m >= (1 - p0) & m < p0
-  p[mid] = (1 - p0[mid]) / m[mid]
-  high = m >= p0 & m < 1
-  p[high] = (1 - m[high]) / m[high]
-  p[m >= 1] = 0
-  pmin(pmax(p, 0), 1)
-}
 
 #' PIT CDF: U = F_Mlambda(m; p0)
 pit_cdf = function(m, p0) {
@@ -49,38 +46,42 @@ pit_cdf = function(m, p0) {
   pmin(pmax(u, 0), 1)
 }
 
-#' PIT analysis: U_i, P_i, KS test, tail fractions
+#' PIT analysis on U_i: upper-tail frequencies, one-sided KS, ECDF plot
 pit_analysis = function(game_data, out_dir_fig, league_name = "NBA") {
   game_data = game_data |> filter(!is.na(max_wp_loser) & !is.na(starting_wp_favored))
   p0 = game_data$starting_wp_favored
   m  = game_data$max_wp_loser
   u = pit_cdf(m, p0)
-  pit_p = pit_pvalue(m, p0)
   n = length(u)
 
-  prop_10 = mean(pit_p <= 0.10)
-  prop_05 = mean(pit_p <= 0.05)
-  prop_01 = mean(pit_p <= 0.01)
+  prop_90 = mean(u >= 0.90)
+  prop_95 = mean(u >= 0.95)
+  prop_99 = mean(u >= 0.99)
 
-  # One-sided KS: D_n^- = sup(F_hat_P(t) - t), alternative="greater"
+  # One-sided KS upper-tail direction on U:
+  # D_upper = sup_t (t - F_hat_U(t)); reject for excess large U_i.
   ks_result = tryCatch(
-    stats::ks.test(pit_p, "punif", 0, 1, alternative = "greater", exact = FALSE),
+    stats::ks.test(u, "punif", 0, 1, alternative = "less", exact = FALSE),
     error = function(e) list(statistic = NA_real_, p.value = NA_real_)
   )
   ks_stat = if (!is.na(ks_result$statistic)) as.numeric(ks_result$statistic) else NA_real_
   ks_pval = if (!is.na(ks_result$p.value)) as.numeric(ks_result$p.value) else NA_real_
 
-  p_hist = ggplot(data.frame(u = u), aes(x = u)) +
-    geom_histogram(aes(y = after_stat(density)), binwidth = 0.05, boundary = 0,
-                   fill = PIT_FILL, color = "white") +
-    geom_hline(yintercept = 1, color = PIT_LINE, linewidth = 1) +
-    coord_cartesian(xlim = c(0, 1), ylim = c(0, NA)) +
-    labs(x = expression("PIT" ~ U[i]), y = "Density",
-         title = paste0(league_name, ": PIT values vs Uniform(0,1)")) +
-    theme_minimal()
-  ggsave(file.path(out_dir_fig, "pit.png"), p_hist, width = 6, height = 4, dpi = 300)
+  u_ecdf = ggplot(data.frame(u = u), aes(x = u)) +
+    annotate("rect", xmin = 0.90, xmax = 1, ymin = 0, ymax = 1,
+             alpha = 0.08, fill = PIT_FILL) +
+    stat_ecdf(geom = "step", linewidth = 1.1, color = PIT_LINE) +
+    geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = PIT_REF) +
+    coord_equal(xlim = c(0, 1), ylim = c(0, 1), expand = FALSE) +
+    labs(
+      x = expression("PIT value" ~ U[i]),
+      y = expression(hat(F)[U](t)),
+      title = paste0(league_name, ": ECDF of PIT values")
+    ) +
+    paper_theme(base_size = 11)
+  ggsave(file.path(out_dir_fig, "pit.png"), u_ecdf, width = 6, height = 4, dpi = 300)
 
-  list(n = n, prop_10 = prop_10, prop_05 = prop_05, prop_01 = prop_01,
+  list(n = n, prop_90 = prop_90, prop_95 = prop_95, prop_99 = prop_99,
        ks_stat = ks_stat, ks_pval = ks_pval)
 }
 
@@ -103,13 +104,13 @@ if (!file.exists(all_games_path)) {
 
 pit_result = pit_analysis(all_games, out_dir)
 writeLines(sprintf(
-  "n=%d prop_10=%.3f prop_05=%.3f prop_01=%.3f ks_stat=%.4f ks_pval=%.4f",
-  pit_result$n, pit_result$prop_10, pit_result$prop_05, pit_result$prop_01,
+  "n=%d prop_90=%.3f prop_95=%.3f prop_99=%.3f ks_stat=%.4f ks_pval=%.4f",
+  pit_result$n, pit_result$prop_90, pit_result$prop_95, pit_result$prop_99,
   pit_result$ks_stat, pit_result$ks_pval
 ), file.path(data_dir, "pit_summary.txt"))
 
 message("\nNBA PIT diagnostics:")
-message(sprintf("  n=%d  P(P<=0.10)=%.3f  P(P<=0.05)=%.3f  P(P<=0.01)=%.3f  KS=%.4f  p=%.4f",
-  pit_result$n, pit_result$prop_10, pit_result$prop_05, pit_result$prop_01,
+message(sprintf("  n=%d  P(U>=0.90)=%.3f  P(U>=0.95)=%.3f  P(U>=0.99)=%.3f  KS=%.4f  p=%.4f",
+  pit_result$n, pit_result$prop_90, pit_result$prop_95, pit_result$prop_99,
   pit_result$ks_stat, pit_result$ks_pval))
 message("\nNBA analysis complete! Output in ", out_dir)

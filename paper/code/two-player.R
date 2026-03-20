@@ -1,7 +1,17 @@
-# Generate figures for reanimation/ (AOAS pivot)
-# Run from repo root: Rscript reanimation/code/two-player.R
+# Generate distribution figures for paper/
+# Run from paper/ root: Rscript code/two-player.R
 
 library(tidyverse)
+
+args_full <- commandArgs(trailingOnly = FALSE)
+file_arg <- args_full[grepl("^--file=", args_full)]
+if (length(file_arg) > 0) {
+  script_path <- normalizePath(sub("^--file=", "", file_arg[1]))
+} else {
+  script_path <- normalizePath("code/two-player.R")
+}
+paper_root <- normalizePath(file.path(dirname(script_path), ".."))
+source(file.path(paper_root, "code", "plot-style.R"))
 
 # Define the piecewise upper tail distribution P(M_ℓ ≥ x) for given p_0
 mixture_upper_tail = function(x, p0) {
@@ -71,8 +81,7 @@ plot_data_pdf = expand_grid(
   ) %>%
   filter(!is.na(density))
 
-library(viridisLite)
-gradient_colors = viridis(length(p0_values) + 1, option = "magma")[1:length(p0_values)]
+gradient_colors <- paper_palette_seq(length(p0_values), begin = 0.20, end = 0.88)
 
 # Create the CDF plot
 p_cdf = ggplot(plot_data_cdf, aes(x = x, y = cdf, color = p0_label)) +
@@ -88,7 +97,7 @@ p_cdf = ggplot(plot_data_cdf, aes(x = x, y = cdf, color = p0_label)) +
     x = "x",
     y = expression("P(M"[lambda]*" " <= " x)")
   ) +
-  theme_minimal() +
+  paper_theme(base_size = 11) +
   theme(
     legend.position = "right"
   )
@@ -107,13 +116,13 @@ p_pdf = ggplot(plot_data_pdf, aes(x = x, y = density, color = p0_label)) +
     x = "x",
     y = "Density"
   ) +
-  theme_minimal() +
+  paper_theme(base_size = 11) +
   theme(
     legend.position = "right"
   )
 
-# Output to reanimation/figures/ (paths relative to repo root)
-out_dir = "reanimation/figures/distributions"
+# Output to paper/figures/
+out_dir <- file.path(paper_root, "figures", "distributions")
 dir.create(out_dir, recursive = TRUE, showWarnings = FALSE)
 ggsave(file.path(out_dir, "sports_cdf.png"), p_cdf, width = 8, height = 5, dpi = 300)
 ggsave(file.path(out_dir, "sports_pdf.png"), p_pdf, width = 8, height = 5, dpi = 300)
